@@ -100,11 +100,11 @@ export const asyncRouterMap = [
         hidden: true,
         meta: { title: 'menu.dashboard.indicator', keepAlive: false, icon: 'line-chart', permission: ['dashboard'] }
       },
-      // 旧路由兼容：回测中心 → 指标 IDE
+      // 旧路由兼容：回测中心 → 指标 IDE（保留 query 参数以便传递 strategy_id）
       {
         path: '/backtest-center',
         name: 'BacktestCenter',
-        redirect: '/indicator-ide',
+        redirect: to => ({ path: '/indicator-ide', query: to.query }),
         hidden: true,
         meta: { title: 'menu.dashboard.backtestCenter', keepAlive: false, icon: 'experiment', permission: ['dashboard'] }
       },

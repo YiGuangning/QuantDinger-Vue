@@ -570,8 +570,8 @@
                                 <div class="field-label">{{ $t('indicatorIde.initialCapital') }}</div>
                                 <a-input-number
                                   v-model="initialCapital"
-                                  :min="1000"
-                                  :step="10000"
+                                  :min="1"
+                                  :step="100"
                                   :precision="2"
                                   size="small"
                                   style="width: 100%"
@@ -1502,6 +1502,7 @@ import { formatBacktestTime } from '@/utils/userTime'
 import { resolveExperimentIndicatorParams } from '@/utils/experimentOverrides'
 import { getUserInfo } from '@/api/login'
 import { getWatchlist, addWatchlist, searchSymbols } from '@/api/market'
+import { getStrategyDetail, runStrategyBacktest } from '@/api/strategy'
 import KlineChart from '@/views/indicator-analysis/components/KlineChart.vue'
 import BacktestHistoryDrawer from '@/views/indicator-analysis/components/BacktestHistoryDrawer.vue'
 import QuickTradePanel from '@/components/QuickTradePanel/QuickTradePanel'
@@ -1615,6 +1616,11 @@ export default {
       hasResult: false,
       result: {},
       backtestRunId: null,
+
+      // Strategy backtest mode (navigated from strategy-live page)
+      strategyBacktestId: null,
+      isStrategyBacktestMode: false,
+      strategyBacktestName: '',
 
       activeIndicators: [],
       /** 是否在 K 线图上运行当前指标（关闭后仅保留 K 线，不计算/绘制指标） */
@@ -1780,6 +1786,9 @@ export default {
       return !!(this.symbol && String(this.symbol).trim())
     },
     canRunBacktest () {
+      if (this.isStrategyBacktestMode) {
+        return this.strategyBacktestId && this.symbol && this.startDate && this.endDate
+      }
       return this.selectedIndicatorId && this.symbol && this.startDate && this.endDate
     },
     selectedIndicatorObj () {
@@ -2241,7 +2250,14 @@ export default {
     await this.loadIndicators()
     await this.loadWatchlist()
     this.restoreIdeUiState()
-    this.autoSelectFirstIndicator()
+
+    // Check if navigated from strategy backtest
+    const strategyId = this.$route.query.strategy_id
+    if (strategyId) {
+      await this.loadStrategyForBacktest(parseInt(strategyId))
+    } else {
+      this.autoSelectFirstIndicator()
+    }
   },
   mounted () {
     this._fullscreenListener = () => this.onGlobalFullscreenChange()
@@ -2521,6 +2537,62 @@ export default {
           this.chartVisibleIndicatorIds = [Number(this.indicators[0].id)]
         }
         this.onIndicatorChange(this.indicators[0].id)
+      }
+    },
+
+    // ===== Strategy backtest mode =====
+    async loadStrategyForBacktest (strategyId) {
+      if (!strategyId) return
+      try {
+        const res = await getStrategyDetail(strategyId)
+        if (res.code !== 1 || !res.data) {
+          this.$message.error(this.$t('indicatorIde.strategyLoadFailed'))
+          return
+        }
+        const strategy = res.data
+        const indicatorConfig = strategy.indicator_config || {}
+        const tradingConfig = strategy.trading_config || {}
+        const exchangeConfig = strategy.exchange_config || {}
+
+        // Load indicator code from strategy
+        if (indicatorConfig.indicator_code) {
+          this.currentCode = indicatorConfig.indicator_code
+        }
+
+        // Load trading config
+        if (tradingConfig.symbol) this.symbol = tradingConfig.symbol
+        if (tradingConfig.timeframe) this.timeframe = tradingConfig.timeframe
+        if (tradingConfig.initial_capital) this.initialCapital = Number(tradingConfig.initial_capital)
+        if (tradingConfig.leverage != null) this.leverage = Number(tradingConfig.leverage)
+        if (tradingConfig.trade_direction) this.tradeDirection = tradingConfig.trade_direction
+        if (tradingConfig.commission != null) this.commission = Number(tradingConfig.commission) * 100
+        if (tradingConfig.slippage != null) this.slippage = Number(tradingConfig.slippage) * 100
+        // Map signal_mode to enableMtf — confirmed mode uses next-bar-open execution
+        if (tradingConfig.signal_mode === 'confirmed') {
+          // confirmed mode is the default, no MTF needed
+        }
+
+        // Map market_type to market field
+        if (tradingConfig.market_type || exchangeConfig.market_type) {
+          const mt = (tradingConfig.market_type || exchangeConfig.market_type || '').toLowerCase()
+          if (mt === 'spot' || mt === 'swap' || mt === 'margin' || mt === 'future') {
+            this.market = 'Crypto'
+          } else if (mt === 'stock' || mt === 'equity') {
+            this.market = 'USStock'
+          }
+        }
+
+        this.strategyBacktestId = strategyId
+        this.isStrategyBacktestMode = true
+        this.strategyBacktestName = strategy.strategy_name || ''
+
+        this.$message.success(
+          (this.$t('indicatorIde.strategyLoaded') || '已加载策略: {name}')
+            .replace('{name}', this.strategyBacktestName)
+        )
+      } catch (e) {
+        console.error('Failed to load strategy for backtest:', e)
+        this.$message.error(this.$t('indicatorIde.strategyLoadFailed'))
       }
     },
     ensureChartReady () {
@@ -4019,29 +4091,36 @@ export default {
       const endStr = override && override.end ? override.end : this.endDate.format('YYYY-MM-DD')
       this.lastBacktestRangeLabel = override && override.label ? override.label : 'full'
       try {
-        const response = await request({
-          url: '/api/indicator/backtest',
-          method: 'post',
-          data: {
-            userid: this.userId || 1,
-            indicatorId: this.selectedIndicatorId,
-            indicatorCode: this.currentCode || '',
-            symbol: this.symbol,
-            market: this.market,
-            timeframe: this.timeframe,
-            startDate: startStr,
-            endDate: endStr,
-            initialCapital: this.initialCapital,
-            commission: Number(this.commission || 0) / 100,
-            slippage: Number(this.slippage || 0) / 100,
-            leverage: this.leverage,
-            tradeDirection: this.tradeDirection,
-            strategyConfig: this.buildBacktestStrategyConfig(),
-            enableMtf: this.enableMtf,
-            persist: true
-          },
-          timeout: 600000
-        })
+        const response = this.isStrategyBacktestMode
+          ? await runStrategyBacktest({
+              strategyId: this.strategyBacktestId,
+              startDate: startStr,
+              endDate: endStr,
+              timeout: 600000
+            })
+          : await request({
+              url: '/api/indicator/backtest',
+              method: 'post',
+              data: {
+                userid: this.userId || 1,
+                indicatorId: this.selectedIndicatorId,
+                indicatorCode: this.currentCode || '',
+                symbol: this.symbol,
+                market: this.market,
+                timeframe: this.timeframe,
+                startDate: startStr,
+                endDate: endStr,
+                initialCapital: this.initialCapital,
+                commission: Number(this.commission || 0) / 100,
+                slippage: Number(this.slippage || 0) / 100,
+                leverage: this.leverage,
+                tradeDirection: this.tradeDirection,
+                strategyConfig: this.buildBacktestStrategyConfig(),
+                enableMtf: this.enableMtf,
+                persist: true
+              },
+              timeout: 600000
+            })
         if (response.code === 1 && response.data) {
           if (response.data.runId) this.backtestRunId = response.data.runId
           this.result = response.data.result || response.data

@@ -4759,6 +4759,10 @@ const locale = {
   'indicatorIde.strategyDirectives.fields.trailingStopPct': '追踪幅度',
   'indicatorIde.strategyDirectives.fields.trailingActivationPct': '追踪激活',
   'indicatorIde.strategyDirectives.fields.tradeDirection': '交易方向',
+  // Strategy backtest mode
+  'indicatorIde.strategyLoaded': '已加载策略：{name}',
+  'indicatorIde.strategyLoadFailed': '加载策略失败',
+  'indicatorIde.strategyBacktestBadge': '策略回测',
 
   // ===== Trading Assistant: 三个新内置策略模板 =====
   'trading-assistant.template.trailingStop': '追踪止损',

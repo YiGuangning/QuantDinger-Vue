@@ -4931,6 +4931,10 @@ const locale = {
   'indicatorIde.strategyDirectives.fields.trailingStopPct': 'Trailing distance',
   'indicatorIde.strategyDirectives.fields.trailingActivationPct': 'Trailing arm',
   'indicatorIde.strategyDirectives.fields.tradeDirection': 'Direction',
+  // Strategy backtest mode
+  'indicatorIde.strategyLoaded': 'Strategy loaded: {name}',
+  'indicatorIde.strategyLoadFailed': 'Failed to load strategy',
+  'indicatorIde.strategyBacktestBadge': 'Strategy Backtest',
 
   // ===== Trading Assistant: three new built-in templates =====
   'trading-assistant.template.trailingStop': 'Trailing stop',
