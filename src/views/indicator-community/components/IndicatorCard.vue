@@ -73,6 +73,8 @@
         </div>
       </div>
 
+      <overfit-risk-gauge v-if="hasKpi" :indicator="indicator" />
+
       <!--
         "Applicable" range tags: distilled from the symbols/timeframes
         the author has successfully backtested. We cap at 2 visible
@@ -112,6 +114,8 @@
 </template>
 
 <script>
+import OverfitRiskGauge from './OverfitRiskGauge.vue'
+
 // 预定义的渐变色方案
 const GRADIENT_PRESETS = [
   'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -130,6 +134,7 @@ const GRADIENT_PRESETS = [
 
 export default {
   name: 'IndicatorCard',
+  components: { OverfitRiskGauge },
   props: {
     indicator: {
       type: Object,

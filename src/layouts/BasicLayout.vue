@@ -236,7 +236,7 @@ export default {
       return this.brandConfig
     },
     appVersion () {
-      return (this.brandConfig && this.brandConfig.app_version) || defaultSettings.appVersion || '3.0.14'
+      return (this.brandConfig && this.brandConfig.app_version) || defaultSettings.appVersion || '3.0.15'
     },
     // Logo 优先用后端 BRAND_LOGO_*_URL；为空时回退到打包好的 assets/logo.png
     currentLogo () {

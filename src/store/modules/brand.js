@@ -8,7 +8,7 @@ import { getBrandConfig } from '@/api/brand'
  */
 const DEFAULT_BRAND = {
   app_name: 'QuantDinger',
-  app_version: '3.0.14',
+  app_version: '3.0.15',
   copyright: '© 2025-2026 QuantDinger. All rights reserved.',
   logos: {
     light: '',

@@ -79,7 +79,9 @@
           <!-- 热力图 - 独立加载 -->
           <div class="heatmap-box">
             <div class="box-header">
-              <a-radio-group v-model="heatmapType" size="small" button-style="solid">
+              <a-radio-group v-model="heatmapType" size="small" button-style="solid" class="heatmap-type-tabs">
+                <a-radio-button value="us_stocks">{{ $t('globalMarket.usStockHeatmap') }}</a-radio-button>
+                <a-radio-button value="hk_stocks">{{ $t('globalMarket.hkStockHeatmap') }}</a-radio-button>
                 <a-radio-button value="crypto">{{ $t('globalMarket.cryptoHeatmap') }}</a-radio-button>
                 <a-radio-button value="commodities">{{ $t('globalMarket.commoditiesHeatmap') }}</a-radio-button>
                 <a-radio-button value="sectors">{{ $t('globalMarket.sectorHeatmap') }}</a-radio-button>
@@ -794,7 +796,7 @@ import sessionCache from '@/utils/sessionCache'
 const MARKET_CACHE = {
   sentiment: { key: 'aiAnalysis.market.sentiment', ttl: 5 * 60 * 1000 },
   indices: { key: 'aiAnalysis.market.indices', ttl: 2 * 60 * 1000 },
-  heatmap: { key: 'aiAnalysis.market.heatmap', ttl: 2 * 60 * 1000 },
+  heatmap: { key: 'aiAnalysis.market.heatmap.v4', ttl: 2 * 60 * 1000 },
   calendar: { key: 'aiAnalysis.market.calendar', ttl: 10 * 60 * 1000 }
 }
 
@@ -829,13 +831,13 @@ export default {
   data () {
     return {
       loadingMarket: false,
-      heatmapType: 'crypto',
+      heatmapType: 'us_stocks',
       marketData: {
         fearGreed: null,
         vix: null,
         dxy: null,
         indices: [],
-        heatmap: { crypto: [], commodities: [], sectors: [], forex: [] },
+        heatmap: { us_stocks: [], hk_stocks: [], crypto: [], commodities: [], sectors: [], forex: [] },
         calendar: []
       },
       // 独立加载状态 - 渐进式加载
@@ -1538,6 +1540,8 @@ export default {
         const heatmap = sessionCache.read(MARKET_CACHE.heatmap.key)
         if (heatmap && typeof heatmap === 'object') {
           this.marketData.heatmap = {
+            us_stocks: heatmap.us_stocks || [],
+            hk_stocks: heatmap.hk_stocks || [],
             crypto: heatmap.crypto || [],
             commodities: heatmap.commodities || [],
             sectors: heatmap.sectors || [],
@@ -1553,18 +1557,16 @@ export default {
       }
     },
     async loadMarketData (force = false) {
-      // Progressive loader: each of the four widgets refreshes independently
-      // and respects the per-widget TTL cache, so re-entering the page or
-      // calling this from activated() does NOT spam the upstream finance
-      // APIs. Pass force=true to bypass the cache (e.g. user clicks Refresh).
-      // Note: force may arrive as an Event object when called from @click
-      // without parens — normalise to a strict boolean.
+      // Progressive loader: each widget respects its TTL cache.
+      // Heatmap runs after overview so backend crypto/forex/commodity caches
+      // are already warm — avoids a 40s+ cold-start that used to hit the
+      // 30s axios timeout and leave all heatmap tabs empty.
       const bypass = force === true
       this.loadingMarket = true
       this.loadSentimentData(bypass)
-      this.loadIndicesData(bypass)
-      this.loadHeatmapData(bypass)
       this.loadCalendarData(bypass)
+      await this.loadIndicesData(bypass)
+      this.loadHeatmapData(bypass)
     },
     async loadSentimentData (force = false) {
       const meta = MARKET_CACHE.sentiment
@@ -1620,11 +1622,14 @@ export default {
     },
     async loadHeatmapData (force = false) {
       const meta = MARKET_CACHE.heatmap
-      const have = this.marketData.heatmap && (
-        (this.marketData.heatmap.crypto || []).length +
-        (this.marketData.heatmap.sectors || []).length +
-        (this.marketData.heatmap.commodities || []).length +
-        (this.marketData.heatmap.forex || []).length
+      const h = this.marketData.heatmap || {}
+      const have = h && (
+        (h.us_stocks || []).length +
+        (h.hk_stocks || []).length +
+        (h.crypto || []).length +
+        (h.sectors || []).length +
+        (h.commodities || []).length +
+        (h.forex || []).length
       ) > 0
       if (!force && sessionCache.isFresh(meta.key) && have) {
         this.loadingHeatmap = false
@@ -1633,9 +1638,11 @@ export default {
       }
       this.loadingHeatmap = true
       try {
-        const res = await getMarketHeatmap()
+        const res = await getMarketHeatmap(force ? { force: 'true' } : {})
         if (res?.code === 1 && res?.data) {
           const next = {
+            us_stocks: res.data.us_stocks || [],
+            hk_stocks: res.data.hk_stocks || [],
             crypto: res.data.crypto || [],
             commodities: res.data.commodities || [],
             sectors: res.data.sectors || [],
@@ -1775,12 +1782,19 @@ export default {
     },
     formatHeatmapPrice (price) {
       if (!price) return ''
-      if (price >= 10000) return '$' + (price / 1000).toFixed(1) + 'K'
-      if (price >= 1000) return '$' + price.toFixed(0)
-      if (price >= 1) return '$' + price.toFixed(2)
-      return '$' + price.toFixed(4)
+      const prefix = this.heatmapType === 'hk_stocks' ? 'HK$' : '$'
+      if (price >= 10000) return prefix + (price / 1000).toFixed(1) + 'K'
+      if (price >= 1000) return prefix + price.toFixed(0)
+      if (price >= 1) return prefix + price.toFixed(2)
+      return prefix + price.toFixed(4)
     },
     getHeatmapName (item) {
+      if (this.heatmapType === 'hk_stocks') {
+        return this.isZhLocale ? (item.name_cn || item.fullName || item.name) : (item.name || item.fullName)
+      }
+      if (this.heatmapType === 'us_stocks') {
+        return item.name || item.fullName || ''
+      }
       // sectors, commodities, forex 都需要多语言适配
       if (this.heatmapType === 'sectors' || this.heatmapType === 'commodities' || this.heatmapType === 'forex') {
         return this.isZhLocale ? (item.name_cn || item.name) : (item.name_en || item.name)
@@ -2660,24 +2674,34 @@ export default {
 
     .box-header {
       margin-bottom: 10px;
-      ::v-deep .ant-radio-group {
+
+      ::v-deep .ant-radio-group.heatmap-type-tabs {
         display: flex;
-        gap: 0;
+        flex-wrap: wrap;
+        gap: 3px;
+        width: 100%;
         background: #f4f5f7;
         border-radius: 8px;
-        padding: 2px;
+        padding: 3px;
 
         .ant-radio-button-wrapper {
+          flex: 1 1 calc(33.333% - 3px);
+          min-width: 0;
+          max-width: calc(33.333% - 2px);
           font-size: 10px;
           font-weight: 600;
-          padding: 0 8px;
-          height: 24px;
-          line-height: 22px;
+          padding: 0 2px;
+          height: 26px;
+          line-height: 26px;
           border: none;
           border-radius: 6px;
           background: transparent;
           color: #8c8c8c;
           box-shadow: none;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          text-align: center;
           transition: all 0.2s;
 
           &::before { display: none; }
@@ -3031,18 +3055,15 @@ export default {
     }
 
     .heatmap-box .box-header {
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      margin: 0 -2px;
-      padding: 0 2px 6px;
-
-      ::v-deep .ant-radio-group {
-        display: inline-flex;
-        flex-wrap: nowrap;
-        white-space: nowrap;
+      ::v-deep .ant-radio-group.heatmap-type-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
 
         .ant-radio-button-wrapper {
-          flex: 0 0 auto;
+          flex: 1 1 calc(33.333% - 3px);
+          min-width: 0;
+          max-width: calc(33.333% - 2px);
         }
       }
     }
@@ -3276,7 +3297,7 @@ export default {
       border-color: rgba(255, 255, 255, 0.06);
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 
-      ::v-deep .ant-radio-group {
+      ::v-deep .ant-radio-group.heatmap-type-tabs {
         background: #111113;
 
         .ant-radio-button-wrapper {

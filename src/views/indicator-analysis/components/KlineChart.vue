@@ -6,7 +6,7 @@
         <a-tooltip
           v-for="tool in drawingTools"
           :key="tool.name"
-          :title="tool.title"
+          :title="tool.hint ? `${tool.title} — ${tool.hint}` : tool.title"
           placement="right"
         >
           <div
@@ -361,11 +361,18 @@ export default {
     const addedDrawingOverlayIds = ref([])
     // 当前激活的画线工具
     const activeDrawingTool = ref(null)
+    let shiftMeasurePointerDownHandler = null
 
     // 画线工具定义（使用 computed 实现多语言支持）
     const { proxy } = getCurrentInstance()
 
     const drawingTools = computed(() => [
+      {
+        name: 'measure',
+        title: proxy.$t('dashboard.indicator.drawing.measure'),
+        hint: proxy.$t('dashboard.indicator.drawing.measureHint'),
+        icon: 'column-height'
+      },
       { name: 'line', title: proxy.$t('dashboard.indicator.drawing.line'), icon: 'line' },
       { name: 'horizontalLine', title: proxy.$t('dashboard.indicator.drawing.horizontalLine'), icon: 'minus' },
       { name: 'verticalLine', title: proxy.$t('dashboard.indicator.drawing.verticalLine'), icon: 'column-width' },
@@ -683,6 +690,9 @@ export default {
           extendData: {
             isDrawing: true
           }
+        }
+        if (overlayName === 'priceRangeMeasure') {
+          overlayConfig.styles = getMeasureOverlayTheme()
         }
         const overlayId = chartRef.value.createOverlay(overlayConfig)
         if (overlayId) {
@@ -1235,178 +1245,258 @@ registerOverlay({
     })
 
     // ========== 注册价格测量工具 Overlay (Price Range Measure) ==========
-    // 类似 TradingView 的测量工具，显示两点之间的价格变化和涨跌幅
+    const getMeasureOverlayTheme = () => {
+      const isDark = chartTheme.value === 'dark'
+      const accent = '#26a69a'
+      return {
+        point: {
+          color: accent,
+          borderColor: accent,
+          borderSize: 2,
+          radius: 4,
+          activeColor: accent,
+          activeBorderColor: accent,
+          activeBorderSize: 2,
+          activeRadius: 5
+        },
+        text: {
+          color: isDark ? 'rgba(236, 240, 245, 0.92)' : 'rgba(38, 44, 52, 0.88)',
+          backgroundColor: 'transparent',
+          size: 11,
+          weight: 'normal'
+        },
+        rect: {
+          style: 'stroke_fill',
+          color: isDark ? 'rgba(22, 26, 35, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)',
+          borderSize: 1,
+          borderRadius: 6
+        }
+      }
+    }
+
+    // 类似 TradingView：按住拖拽显示两点之间的涨跌幅、价差与 K 线数量
+    const buildPriceRangeMeasureFigures = (startPoint, endPoint, coordinates) => {
+      if (!startPoint || !endPoint || !coordinates[0] || !coordinates[1]) return []
+
+      const startPrice = Number(startPoint.value)
+      const endPrice = Number(endPoint.value)
+      if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return []
+
+      const priceChange = endPrice - startPrice
+      const percentChange = startPrice !== 0 ? (priceChange / startPrice) * 100 : 0
+
+      const startTimestamp = startPoint.timestamp
+      const endTimestamp = endPoint.timestamp
+      const timeDiff = Math.abs(endTimestamp - startTimestamp)
+
+      let timeSpan = ''
+      const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24))
+      const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+      const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60))
+      const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000)
+
+      if (days > 0) {
+        timeSpan = `${days}${proxy.$t('dashboard.indicator.drawing.measureDayUnit')}${hours > 0 ? hours + proxy.$t('dashboard.indicator.drawing.measureHourUnit') : ''}`
+      } else if (hours > 0) {
+        timeSpan = `${hours}${proxy.$t('dashboard.indicator.drawing.measureHourUnit')}${minutes > 0 ? minutes + proxy.$t('dashboard.indicator.drawing.measureMinuteUnit') : ''}`
+      } else if (minutes > 0) {
+        timeSpan = `${minutes}${proxy.$t('dashboard.indicator.drawing.measureMinuteUnit')}`
+      } else {
+        timeSpan = `${seconds}${proxy.$t('dashboard.indicator.drawing.measureSecondUnit')}`
+      }
+
+      let barCount = 0
+      if (Number.isFinite(startPoint.dataIndex) && Number.isFinite(endPoint.dataIndex)) {
+        barCount = Math.abs(endPoint.dataIndex - startPoint.dataIndex)
+      } else {
+        try {
+          const chartData = chartRef.value && typeof chartRef.value.getDataList === 'function'
+            ? chartRef.value.getDataList()
+            : null
+          if (chartData && Array.isArray(chartData) && chartData.length > 0) {
+            const startIndex = chartData.findIndex(item => Math.abs(item.timestamp - startTimestamp) < 1000)
+            const endIndex = chartData.findIndex(item => Math.abs(item.timestamp - endTimestamp) < 1000)
+            if (startIndex >= 0 && endIndex >= 0) {
+              barCount = Math.abs(endIndex - startIndex)
+            }
+          }
+        } catch (e) {}
+      }
+
+      const percentStr = percentChange >= 0
+        ? `+${percentChange.toFixed(2)}%`
+        : `${percentChange.toFixed(2)}%`
+      const pp = pricePrecision.value
+      const priceChangeStr = priceChange >= 0
+        ? `+${priceChange.toFixed(pp)}`
+        : `${priceChange.toFixed(pp)}`
+
+      let metaText = ''
+      if (barCount > 0) {
+        metaText = `${barCount}${proxy.$t('dashboard.indicator.drawing.measureBarUnit')}`
+        if (timeSpan) metaText += ` · ${timeSpan}`
+      } else if (timeSpan) {
+        metaText = timeSpan
+      }
+
+      const isUp = priceChange >= 0
+      const isDark = chartTheme.value === 'dark'
+      const accentColor = isUp ? '#26a69a' : '#ef5350'
+      const accentSoft = isUp ? 'rgba(38, 166, 154, 0.55)' : 'rgba(239, 83, 80, 0.55)'
+      const labelBg = isDark ? 'rgba(22, 26, 35, 0.94)' : 'rgba(255, 255, 255, 0.96)'
+      const labelBorder = isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)'
+      const labelText = isDark ? 'rgba(236, 240, 245, 0.92)' : 'rgba(38, 44, 52, 0.88)'
+      const labelMuted = isDark ? 'rgba(180, 187, 198, 0.78)' : 'rgba(96, 105, 118, 0.82)'
+      const dotFill = isDark ? '#161a23' : '#ffffff'
+
+      const x1 = coordinates[0].x
+      const y1 = coordinates[0].y
+      const x2 = coordinates[1].x
+      const y2 = coordinates[1].y
+      const midX = (x1 + x2) / 2
+      const midY = (y1 + y2) / 2
+      const fontSize = 11
+      const metaFontSize = 10
+      const percentWidth = percentStr.length * 6.8 + 8
+      const priceWidth = priceChangeStr.length * 6.5 + 8
+      const metaWidth = metaText ? metaText.length * 5.8 + 10 : 0
+      const boxWidth = percentWidth + priceWidth + metaWidth + (metaText ? 12 : 4)
+      const boxHeight = metaText ? 34 : 24
+      const boxX = midX - boxWidth / 2
+      const boxY = midY - boxHeight - 14
+      const row1Y = metaText ? boxY + 13 : boxY + boxHeight / 2
+      const row2Y = boxY + 26
+      const priceX = boxX + percentWidth + 2
+
+      const figures = [
+        {
+          type: 'line',
+          attrs: {
+            coordinates: [
+              { x: x1, y: y1 },
+              { x: x2, y: y2 }
+            ]
+          },
+          styles: {
+            style: 'stroke',
+            color: accentSoft,
+            size: 1.5,
+            dashedValue: [5, 4]
+          },
+          ignoreEvent: false
+        },
+        {
+          type: 'circle',
+          attrs: { x: x1, y: y1, r: 5 },
+          styles: { style: 'stroke', color: accentColor, size: 2 },
+          ignoreEvent: false
+        },
+        {
+          type: 'circle',
+          attrs: { x: x1, y: y1, r: 2.5 },
+          styles: { style: 'fill', color: dotFill },
+          ignoreEvent: false
+        },
+        {
+          type: 'circle',
+          attrs: { x: x2, y: y2, r: 5 },
+          styles: { style: 'stroke', color: accentColor, size: 2 },
+          ignoreEvent: false
+        },
+        {
+          type: 'circle',
+          attrs: { x: x2, y: y2, r: 2.5 },
+          styles: { style: 'fill', color: dotFill },
+          ignoreEvent: false
+        },
+        {
+          type: 'rect',
+          attrs: {
+            x: boxX,
+            y: boxY,
+            width: boxWidth,
+            height: boxHeight,
+            r: 6
+          },
+          styles: {
+            style: 'stroke_fill',
+            color: labelBg,
+            borderColor: labelBorder,
+            borderSize: 1
+          },
+          ignoreEvent: false
+        },
+        {
+          type: 'text',
+          attrs: {
+            x: boxX + 8,
+            y: row1Y,
+            text: percentStr,
+            align: 'left',
+            baseline: 'middle'
+          },
+          styles: {
+            color: accentColor,
+            size: fontSize,
+            weight: 'bold',
+            backgroundColor: 'transparent'
+          },
+          ignoreEvent: false
+        },
+        {
+          type: 'text',
+          attrs: {
+            x: priceX,
+            y: row1Y,
+            text: priceChangeStr,
+            align: 'left',
+            baseline: 'middle'
+          },
+          styles: {
+            color: labelText,
+            size: fontSize,
+            weight: 'normal',
+            backgroundColor: 'transparent'
+          },
+          ignoreEvent: false
+        }
+      ]
+
+      if (metaText) {
+        figures.push({
+          type: 'text',
+          attrs: {
+            x: boxX + 8,
+            y: row2Y,
+            text: metaText,
+            align: 'left',
+            baseline: 'middle'
+          },
+          styles: {
+            color: labelMuted,
+            size: metaFontSize,
+            weight: 'normal',
+            backgroundColor: 'transparent'
+          },
+          ignoreEvent: false
+        })
+      }
+
+      return figures
+    }
+
     registerOverlay({
       name: 'priceRangeMeasure',
-      totalStep: 2, // 需要两个点：起点和终点
-      lock: false, // 允许编辑
+      totalStep: 3,
+      lock: false,
       needDefaultPointFigure: false,
       needDefaultXAxisFigure: false,
       needDefaultYAxisFigure: false,
 
-      createPointFigures: ({ coordinates, overlay, ctx }) => {
-        if (!coordinates[0] || !coordinates[1]) return []
-
-        const startPoint = overlay.points[0]
-        const endPoint = overlay.points[1]
-
-        if (!startPoint || !endPoint) return []
-
-        // 获取起点和终点的价格
-        const startPrice = startPoint.value
-        const endPrice = endPoint.value
-        const priceChange = endPrice - startPrice
-        const percentChange = (priceChange / startPrice) * 100
-
-        // 计算时间跨度（通过时间戳差值）
-        const startTimestamp = startPoint.timestamp
-        const endTimestamp = endPoint.timestamp
-        const timeDiff = Math.abs(endTimestamp - startTimestamp)
-
-        // 格式化时间跨度
-        let timeSpan = ''
-        const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24))
-        const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-        const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60))
-        const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000)
-
-        if (days > 0) {
-          timeSpan = `${days}天${hours > 0 ? hours + '小时' : ''}`
-        } else if (hours > 0) {
-          timeSpan = `${hours}小时${minutes > 0 ? minutes + '分钟' : ''}`
-        } else if (minutes > 0) {
-          timeSpan = `${minutes}分钟`
-        } else {
-          timeSpan = `${seconds}秒`
-        }
-
-        // 尝试从图表实例获取数据来计算K线数量
-        let barCount = 0
-        try {
-          if (ctx && ctx.chart) {
-            const chartData = ctx.chart.getData()
-            if (chartData && Array.isArray(chartData) && chartData.length > 0) {
-              const startIndex = chartData.findIndex(item => Math.abs(item.timestamp - startTimestamp) < 1000)
-              const endIndex = chartData.findIndex(item => Math.abs(item.timestamp - endTimestamp) < 1000)
-              if (startIndex >= 0 && endIndex >= 0) {
-                barCount = Math.abs(endIndex - startIndex)
-              }
-            }
-          }
-        } catch (e) {
-          // 如果无法获取数据，忽略错误
-        }
-
-        // 格式化显示文本
-        const percentStr = percentChange >= 0
-          ? `+${percentChange.toFixed(2)}%`
-          : `${percentChange.toFixed(2)}%`
-        const pp = pricePrecision.value
-        const priceChangeStr = priceChange >= 0
-          ? `+${priceChange.toFixed(pp)}`
-          : `${priceChange.toFixed(pp)}`
-
-        // 构建显示文本
-        let displayText = `${percentStr}  ${priceChangeStr}`
-        if (barCount > 0) {
-          displayText += `  (${barCount}根`
-          if (timeSpan) {
-            displayText += ` / ${timeSpan}`
-          }
-          displayText += ')'
-        } else if (timeSpan) {
-          displayText += `  (${timeSpan})`
-        }
-
-        // 根据涨跌设置颜色
-        const isUp = priceChange >= 0
-        const lineColor = isUp ? '#0ecb81' : '#f6465d'
-        const textColor = isUp ? '#0ecb81' : '#f6465d'
-        const bgColor = isUp ? 'rgba(14, 203, 129, 0.1)' : 'rgba(246, 70, 93, 0.1)'
-
-        const x1 = coordinates[0].x
-        const y1 = coordinates[0].y
-        const x2 = coordinates[1].x
-        const y2 = coordinates[1].y
-
-        // 计算文本位置（在线的中点上方）
-        const midX = (x1 + x2) / 2
-        const midY = (y1 + y2) / 2
-        const textOffsetY = -20 // 文本在线上方
-
-        // 估算文本宽度
-        const fontSize = 12
-        const textWidth = displayText.length * 7 + 16 // 简单估算
-        const textHeight = fontSize + 8
-
-        return [
-          // 1. 连接线（带箭头）
-          {
-            type: 'line',
-            attrs: {
-              coordinates: [
-                { x: x1, y: y1 },
-                { x: x2, y: y2 }
-              ]
-            },
-            styles: {
-              style: 'stroke',
-              color: lineColor,
-              size: 2,
-              dashedValue: [4, 4] // 虚线样式
-            },
-            ignoreEvent: false
-          },
-          // 2. 起点标记（小圆点）
-          {
-            type: 'circle',
-            attrs: { x: x1, y: y1, r: 4 },
-            styles: { style: 'fill', color: lineColor },
-            ignoreEvent: false
-          },
-          // 3. 终点标记（小圆点）
-          {
-            type: 'circle',
-            attrs: { x: x2, y: y2, r: 4 },
-            styles: { style: 'fill', color: lineColor },
-            ignoreEvent: false
-          },
-          // 4. 文本背景框
-          {
-            type: 'rect',
-            attrs: {
-              x: midX - textWidth / 2,
-              y: midY + textOffsetY - textHeight / 2,
-              width: textWidth,
-              height: textHeight,
-              r: 4
-            },
-            styles: {
-              style: 'fill',
-              color: bgColor,
-              borderSize: 1,
-              borderColor: lineColor
-            },
-            ignoreEvent: false
-          },
-          // 5. 文本
-          {
-            type: 'text',
-            attrs: {
-              x: midX,
-              y: midY + textOffsetY,
-              text: displayText,
-              align: 'center',
-              baseline: 'middle'
-            },
-            styles: {
-              color: textColor,
-              size: fontSize,
-              weight: 'bold'
-            },
-            ignoreEvent: false
-          }
-        ]
+      createPointFigures: ({ coordinates, overlay }) => {
+        const points = overlay.points || []
+        return buildPriceRangeMeasureFigures(points[0], points[1], coordinates)
       }
     })
 
@@ -2315,6 +2405,27 @@ registerOverlay({
         updateChartTheme()
         nextTick(() => _ensureWmLayer())
 
+        if (container && !shiftMeasurePointerDownHandler) {
+          shiftMeasurePointerDownHandler = (e) => {
+            if (e.button !== 0 || !e.shiftKey || !chartRef.value) return
+            if (activeDrawingTool.value && activeDrawingTool.value !== 'measure') return
+            if (activeDrawingTool.value === 'measure') return
+
+            activeDrawingTool.value = 'measure'
+            try {
+              const overlayId = chartRef.value.createOverlay({
+                name: 'priceRangeMeasure',
+                lock: false,
+                styles: getMeasureOverlayTheme()
+              })
+              if (overlayId) {
+                addedDrawingOverlayIds.value.push(overlayId)
+              }
+            } catch (err) {}
+          }
+          container.addEventListener('pointerdown', shiftMeasurePointerDownHandler, true)
+        }
+
         // 数据就绪后：仅首次创建 VOL，之后只 resize，避免重复 createIndicator 叠多层成交量
         if (chartRef.value && typeof chartRef.value.subscribeAction === 'function') {
           chartRef.value.subscribeAction('onDataReady', () => {
@@ -2629,6 +2740,23 @@ registerOverlay({
         },
         watermark: {
           show: false
+        },
+        overlay: {
+          point: {
+            color: isDark ? '#6b7a8c' : '#94a0ad',
+            borderColor: isDark ? '#6b7a8c' : '#94a0ad',
+            borderSize: 2,
+            radius: 4,
+            activeColor: '#26a69a',
+            activeBorderColor: '#26a69a',
+            activeBorderSize: 2,
+            activeRadius: 5
+          },
+          text: {
+            color: isDark ? 'rgba(236, 240, 245, 0.9)' : 'rgba(38, 44, 52, 0.88)',
+            backgroundColor: 'transparent',
+            size: 11
+          }
         }
       })
     }
@@ -3862,6 +3990,11 @@ registerOverlay({
       }
       if (_wmTimer) { clearInterval(_wmTimer); _wmTimer = null }
       if (_wmObserver) { _wmObserver.disconnect(); _wmObserver = null }
+      const chartContainer = document.getElementById('kline-chart-container')
+      if (chartContainer && shiftMeasurePointerDownHandler) {
+        chartContainer.removeEventListener('pointerdown', shiftMeasurePointerDownHandler, true)
+        shiftMeasurePointerDownHandler = null
+      }
       if (chartRef.value) {
         chartRef.value.destroy()
         chartRef.value = null

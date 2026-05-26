@@ -3,244 +3,19 @@
 // Templates `trendFollowing`, `martingale`, `grid` and `dca` were intentionally
 // removed because the "Trading Bot" page already offers wizard-based versions
 // of the same four strategies (see `views/trading-bot/components/botScriptTemplates.js`).
-// Maintaining two parallel implementations doubled the bug surface without
-// adding user value. Old strategies that were created with
-// `trading_config.script_template_key` set to one of those four keys are
-// unaffected — they ship their own copy of the generated Python in
-// `qd_strategies_trading.strategy_code` and the i18n labels under
-// `trading-assistant.template.*` are kept around for display purposes only.
+//
+// Signal-style templates (`meanReversion`, `breakout`, `rsiMeanReversion`, `macdCross`, etc.)
+// were also removed — those belong in Indicator IDE + Indicator Signal Strategy.
+// i18n labels under `trading-assistant.template.*` are kept for legacy display.
 //
 // What stays here are the "stateful" templates that genuinely cannot be
 // expressed as a single-indicator signal strategy: trailing stops, scale-in
-// ladders, take-profit ladders, multi-indicator combos, etc. These are the
-// real reason the script-strategy escape hatch exists.
+// ladders, take-profit ladders, etc.
 const TEMPLATE_DEFINITIONS = [
-  {
-    key: 'meanReversion',
-    icon: '🔄',
-    code: `"""
-Mean Reversion Strategy
-Bollinger Bands based: buy at lower band, sell at upper band.
-"""
-
-def on_init(ctx):
-    ctx.period = ctx.param('period', 20)
-    ctx.std_mult = ctx.param('std_mult', 2.0)
-    ctx.position_pct = ctx.param('position_pct', 0.5)
-    ctx.take_profit_pct = ctx.param('take_profit_pct', 0.03)
-    ctx.stop_loss_pct = ctx.param('stop_loss_pct', 0.02)
-
-def on_bar(ctx, bar):
-    bars = ctx.bars(ctx.period + 5)
-    if len(bars) < ctx.period:
-        return
-
-    closes = [b['close'] for b in bars[-ctx.period:]]
-    mean = sum(closes) / len(closes)
-    std = (sum((c - mean) ** 2 for c in closes) / len(closes)) ** 0.5
-
-    upper = mean + ctx.std_mult * std
-    lower = mean - ctx.std_mult * std
-    price = bar['close']
-
-    if price <= lower and not ctx.position:
-        qty = (ctx.equity * ctx.position_pct) / price
-        ctx.buy(price, qty)
-        ctx.log(f"BUY at {price:.2f} (below lower band {lower:.2f})")
-
-    elif price >= upper and ctx.position and ctx.position['side'] == 'long':
-        ctx.close_position()
-        ctx.log(f"SELL at {price:.2f} (above upper band {upper:.2f})")
-
-    elif ctx.position and ctx.position['side'] == 'long':
-        entry = ctx.position['entry_price']
-        pnl_pct = (price - entry) / entry
-        if pnl_pct >= ctx.take_profit_pct or pnl_pct <= -ctx.stop_loss_pct:
-            ctx.close_position()
-            ctx.log(f"Risk exit at {price:.2f}, pnl={pnl_pct:.2%}")
-`,
-    params: [
-      { name: 'period', type: 'integer', default: 20, min: 2, max: 300, step: 1 },
-      { name: 'std_mult', type: 'number', default: 2.0, min: 0.5, max: 6, step: 0.1 },
-      { name: 'position_pct', type: 'percent', default: 0.5, min: 0.05, max: 1, step: 0.01 },
-      { name: 'take_profit_pct', type: 'percent', default: 0.03, min: 0.001, max: 1, step: 0.001 },
-      { name: 'stop_loss_pct', type: 'percent', default: 0.02, min: 0.001, max: 1, step: 0.001 }
-    ]
-  },
-  {
-    key: 'breakout',
-    icon: '⚡',
-    code: `"""
-Breakout Strategy
-Enter when price breaks key resistance/support with volume confirmation.
-"""
-
-def on_init(ctx):
-    ctx.lookback = ctx.param('lookback', 20)
-    ctx.volume_mult = ctx.param('volume_mult', 1.5)
-    ctx.position_pct = ctx.param('position_pct', 0.9)
-    ctx.stop_pct = ctx.param('stop_pct', 0.02)
-    ctx.take_profit_pct = ctx.param('take_profit_pct', 0.05)
-
-def on_bar(ctx, bar):
-    bars = ctx.bars(ctx.lookback + 5)
-    if len(bars) < ctx.lookback:
-        return
-
-    recent = bars[-ctx.lookback:]
-    high = max(b['high'] for b in recent[:-1])
-    low = min(b['low'] for b in recent[:-1])
-    avg_vol = sum(b['volume'] for b in recent[:-1]) / (len(recent) - 1)
-    price = bar['close']
-    vol = bar['volume']
-
-    if price > high and vol > avg_vol * ctx.volume_mult and not ctx.position:
-        qty = (ctx.equity * ctx.position_pct) / price
-        ctx.buy(price, qty)
-        ctx.log(f"BREAKOUT BUY at {price:.2f} (prev high: {high:.2f})")
-
-    elif price < low and ctx.position and ctx.position['side'] == 'long':
-        ctx.close_position()
-        ctx.log(f"BREAK DOWN, close at {price:.2f}")
-
-    if ctx.position and ctx.position['side'] == 'long':
-        entry = ctx.position['entry_price']
-        pnl_pct = (price - entry) / entry
-        if pnl_pct <= -ctx.stop_pct:
-            ctx.close_position()
-            ctx.log(f"STOP LOSS at {price:.2f}")
-        elif pnl_pct >= ctx.take_profit_pct:
-            ctx.close_position()
-            ctx.log(f"TAKE PROFIT at {price:.2f}")
-`,
-    params: [
-      { name: 'lookback', type: 'integer', default: 20, min: 2, max: 300, step: 1 },
-      { name: 'volume_mult', type: 'number', default: 1.5, min: 0.5, max: 10, step: 0.1 },
-      { name: 'position_pct', type: 'percent', default: 0.9, min: 0.05, max: 1, step: 0.01 },
-      { name: 'stop_pct', type: 'percent', default: 0.02, min: 0.001, max: 1, step: 0.001 },
-      { name: 'take_profit_pct', type: 'percent', default: 0.05, min: 0.001, max: 1, step: 0.001 }
-    ]
-  },
-  {
-    key: 'rsiMeanReversion',
-    icon: '📉',
-    code: `"""
-RSI mean reversion (long-focused)
-Buys when RSI is oversold; exits long when RSI is overbought.
-"""
-
-def on_init(ctx):
-    ctx.rsi_period = ctx.param('rsi_period', 14)
-    ctx.oversold = ctx.param('oversold', 30)
-    ctx.overbought = ctx.param('overbought', 70)
-    ctx.position_pct = ctx.param('position_pct', 0.5)
-
-def _rsi_simple(closes, period):
-    n = len(closes)
-    if n < period + 1:
-        return None
-    gains = 0.0
-    losses = 0.0
-    for i in range(n - period, n):
-        diff = closes[i] - closes[i - 1]
-        if diff > 0:
-            gains += diff
-        else:
-            losses -= diff
-    if losses == 0:
-        return 100.0 if gains > 0 else 50.0
-    rs = gains / losses
-    return 100.0 - (100.0 / (1.0 + rs))
-
-def on_bar(ctx, bar):
-    need = ctx.rsi_period + 3
-    bars = ctx.bars(need)
-    if len(bars) < need:
-        return
-    closes = [b['close'] for b in bars]
-    r = _rsi_simple(closes, ctx.rsi_period)
-    if r is None:
-        return
-    price = bar['close']
-    if r <= ctx.oversold and not ctx.position:
-        qty = (ctx.equity * ctx.position_pct) / price
-        ctx.buy(price, qty)
-        ctx.log(f"RSI BUY r={r:.1f} at {price:.2f}")
-    elif r >= ctx.overbought and ctx.position and ctx.position['side'] == 'long':
-        ctx.close_position()
-        ctx.log(f"RSI SELL r={r:.1f} at {price:.2f}")
-`,
-    params: [
-      { name: 'rsi_period', type: 'integer', default: 14, min: 2, max: 100, step: 1 },
-      { name: 'oversold', type: 'number', default: 30, min: 1, max: 50, step: 1 },
-      { name: 'overbought', type: 'number', default: 70, min: 50, max: 99, step: 1 },
-      { name: 'position_pct', type: 'percent', default: 0.5, min: 0.05, max: 1, step: 0.01 }
-    ]
-  },
-  {
-    key: 'macdCross',
-    icon: '📊',
-    code: `"""
-MACD histogram crossover
-Enters long when MACD histogram crosses above zero; exits when it crosses below.
-"""
-
-def on_init(ctx):
-    ctx.macd_fast = ctx.param('macd_fast', 12)
-    ctx.macd_slow = ctx.param('macd_slow', 26)
-    ctx.macd_signal = ctx.param('macd_signal', 9)
-    ctx.position_pct = ctx.param('position_pct', 0.6)
-
-def _ema_series(vals, period):
-    k = 2.0 / (period + 1)
-    out = []
-    e = float(vals[0])
-    out.append(e)
-    for v in vals[1:]:
-        v = float(v)
-        e = v * k + e * (1 - k)
-        out.append(e)
-    return out
-
-def _macd_hist_last_two(closes, fast, slow, sig):
-    n = len(closes)
-    if n < slow + sig + 2:
-        return None, None
-    ef = _ema_series(closes, fast)
-    es = _ema_series(closes, slow)
-    macd = [ef[i] - es[i] for i in range(n)]
-    sg = _ema_series(macd, sig)
-    hist = [macd[i] - sg[i] for i in range(n)]
-    return hist[-2], hist[-1]
-
-def on_bar(ctx, bar):
-    need = ctx.macd_slow + ctx.macd_signal + 30
-    bars = ctx.bars(need)
-    if len(bars) < need:
-        return
-    closes = [b['close'] for b in bars]
-    h0, h1 = _macd_hist_last_two(closes, ctx.macd_fast, ctx.macd_slow, ctx.macd_signal)
-    if h0 is None:
-        return
-    price = bar['close']
-    if h0 <= 0 and h1 > 0 and not ctx.position:
-        qty = (ctx.equity * ctx.position_pct) / price
-        ctx.buy(price, qty)
-        ctx.log(f"MACD cross up at {price:.2f}")
-    elif h0 >= 0 and h1 < 0 and ctx.position and ctx.position['side'] == 'long':
-        ctx.close_position()
-        ctx.log(f"MACD cross down at {price:.2f}")
-`,
-    params: [
-      { name: 'macd_fast', type: 'integer', default: 12, min: 2, max: 50, step: 1 },
-      { name: 'macd_slow', type: 'integer', default: 26, min: 5, max: 120, step: 1 },
-      { name: 'macd_signal', type: 'integer', default: 9, min: 2, max: 50, step: 1 },
-      { name: 'position_pct', type: 'percent', default: 0.6, min: 0.05, max: 1, step: 0.01 }
-    ]
-  },
   {
     key: 'trailingStop',
     icon: '🪤',
+    accent: 'violet',
     code: `"""
 Trailing Stop Strategy
 Enter on EMA crossover, manage exits with a hard stop and a trailing stop
@@ -313,6 +88,7 @@ def on_bar(ctx, bar):
   {
     key: 'scaleInOnDip',
     icon: '🪜',
+    accent: 'teal',
     code: `"""
 Scale-in on dip Strategy
 Build a position in tranches as price keeps falling below the entry,
@@ -385,6 +161,7 @@ def on_bar(ctx, bar):
   {
     key: 'takeProfitLadder',
     icon: '🎯',
+    accent: 'amber',
     code: `"""
 Take-Profit Ladder Strategy
 Enter on EMA crossover, then partially close the position at three

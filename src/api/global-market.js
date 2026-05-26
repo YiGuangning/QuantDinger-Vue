@@ -19,10 +19,12 @@ export function getMarketOverview () {
 /**
  * Get market heatmap data (crypto, stock sectors, forex)
  */
-export function getMarketHeatmap () {
+export function getMarketHeatmap (params = {}) {
   return request({
     url: `${BASE_URL}/heatmap`,
-    method: 'get'
+    method: 'get',
+    params,
+    timeout: 90000
   })
 }
 

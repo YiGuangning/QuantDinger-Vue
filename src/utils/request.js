@@ -120,6 +120,8 @@ request.interceptors.request.use(config => {
       config.timeout = ANALYSIS_TIMEOUT
     } else if (config.url.includes('/strategies/ai-generate') || config.url.includes('/indicator/aiGenerate')) {
       config.timeout = AI_GENERATE_TIMEOUT
+    } else if (config.url.includes('/global-market/heatmap')) {
+      config.timeout = 90000
     } else if (config.url.includes('/backtest')) {
       config.timeout = BACKTEST_TIMEOUT
     }

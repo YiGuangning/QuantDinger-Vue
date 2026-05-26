@@ -11,6 +11,9 @@
               <a-tag v-if="selectedTemplate" color="blue" class="current-template-tag">
                 {{ $t(`trading-assistant.template.${selectedTemplate.key}`) }}
               </a-tag>
+              <a-tag v-else-if="isBlankScript" color="default" class="current-template-tag">
+                {{ $t('trading-assistant.editor.blankTemplate') }}
+              </a-tag>
             </div>
             <div class="section-actions">
               <a-button
@@ -32,27 +35,64 @@
       <a-col :xs="24" :md="8" class="side-col">
         <a-tabs v-model="activeTab" size="small" class="side-tabs" :animated="false">
           <a-tab-pane key="templates" :tab="$t('trading-assistant.editor.templateTab')" :force-render="true">
-            <div class="panel-intro">
+            <div class="panel-intro panel-intro--compact">
               <div class="panel-intro__title">{{ $t('trading-assistant.editor.templateIntroTitle') }}</div>
               <div class="panel-intro__desc">{{ $t('trading-assistant.editor.templateIntroDesc') }}</div>
             </div>
-            <div class="template-list">
+
+            <div class="indicator-redirect" role="button" tabindex="0" @click="goIndicatorIde" @keyup.enter="goIndicatorIde">
+              <div class="indicator-redirect__icon">
+                <a-icon type="line-chart" />
+              </div>
+              <div class="indicator-redirect__body">
+                <div class="indicator-redirect__title">{{ $t('trading-assistant.editor.indicatorRedirectTitle') }}</div>
+                <div class="indicator-redirect__desc">{{ $t('trading-assistant.editor.indicatorRedirectDesc') }}</div>
+              </div>
+              <a-icon type="right" class="indicator-redirect__arrow" />
+            </div>
+
+            <div
+              class="blank-card"
+              :class="{ active: isBlankScript }"
+              @click="loadBlankTemplate"
+            >
+              <div class="blank-card__icon">
+                <a-icon type="file-text" />
+              </div>
+              <div class="blank-card__body">
+                <div class="blank-card__title">{{ $t('trading-assistant.editor.blankTemplate') }}</div>
+                <div class="blank-card__desc">{{ $t('trading-assistant.editor.blankTemplateDesc') }}</div>
+              </div>
+              <a-icon v-if="isBlankScript" type="check-circle" theme="filled" class="blank-card__check" />
+            </div>
+
+            <div class="template-section-label">
+              {{ $t('trading-assistant.editor.statefulTemplateSection') }}
+            </div>
+
+            <div class="template-grid">
               <div
                 v-for="tpl in templates"
                 :key="tpl.key"
-                class="template-item"
-                :class="{ active: selectedTemplateKey === tpl.key }"
+                class="template-card"
+                :class="[`template-card--${tpl.accent || 'blue'}`, { active: selectedTemplateKey === tpl.key }]"
                 @click="loadTemplate(tpl.key, { focusParams: true, resetParams: true })"
               >
-                <div class="tpl-header">
-                  <span class="tpl-icon">{{ tpl.icon }}</span>
-                  <span class="tpl-name">{{ $t(`trading-assistant.template.${tpl.key}`) }}</span>
+                <div class="template-card__head">
+                  <span class="template-card__icon">{{ tpl.icon }}</span>
+                  <span class="template-card__badge">{{ $t('trading-assistant.editor.statefulTemplateBadge') }}</span>
                 </div>
-                <p class="tpl-desc">{{ $t(`trading-assistant.template.${tpl.key}Desc`) }}</p>
-                <a-button type="link" size="small" class="tpl-use-btn">
-                  {{ $t('trading-assistant.template.useTemplate') }}
-                  <a-icon type="arrow-right" />
-                </a-button>
+                <div class="template-card__name">{{ $t(`trading-assistant.template.${tpl.key}`) }}</div>
+                <div class="template-card__desc">{{ $t(`trading-assistant.template.${tpl.key}Desc`) }}</div>
+                <div class="template-card__foot">
+                  <span class="template-card__meta">
+                    {{ tpl.params.length }} {{ $t('trading-assistant.editor.paramCountLabel') }}
+                  </span>
+                  <span class="template-card__action">
+                    {{ $t('trading-assistant.template.useTemplate') }}
+                    <a-icon type="arrow-right" />
+                  </span>
+                </div>
               </div>
             </div>
           </a-tab-pane>
@@ -284,6 +324,9 @@ export default {
     selectedTemplate () {
       return getScriptTemplateByKey(this.selectedTemplateKey)
     },
+    isBlankScript () {
+      return !this.selectedTemplateKey
+    },
     aiPromptSuggestions () {
       return [
         {
@@ -308,7 +351,7 @@ export default {
     this.$nextTick(() => {
       this.initEditor()
       if (this.initialTemplateKey) {
-        this.loadTemplate(this.initialTemplateKey, { focusParams: true, resetParams: true })
+        this.applyInitialTemplateKey(this.initialTemplateKey)
       } else if (!this.value) {
         this.$emit('input', this._getDefaultCode())
       }
@@ -353,7 +396,7 @@ export default {
     },
     initialTemplateKey (key) {
       if (key && key !== this.selectedTemplateKey) {
-        this.loadTemplate(key, { focusParams: true, resetParams: true })
+        this.applyInitialTemplateKey(key)
       }
     }
   },
@@ -398,28 +441,46 @@ My Custom Strategy
 """
 
 def on_init(ctx):
-    # Initialize strategy parameters
+    # Initialize strategy parameters via ctx.param('name', default)
     pass
 
 def on_bar(ctx, bar):
     # Core trading logic, called on each K-line bar
     # bar: { open, high, low, close, volume, timestamp }
-    price = bar['close']
-
-    bars = ctx.bars(20)
-    if len(bars) < 20:
-        return
-
-    avg = sum(b['close'] for b in bars) / len(bars)
-
-    if price > avg and not ctx.position:
-        ctx.buy(price, ctx.equity * 0.9 / price)
-        ctx.log(f"BUY at {price}")
-
-    elif price < avg and ctx.position:
-        ctx.close_position()
-        ctx.log(f"SELL at {price}")
+    pass
 `
+    },
+
+    applyInitialTemplateKey (key) {
+      const template = getScriptTemplateByKey(key)
+      if (template) {
+        this.loadTemplate(key, { focusParams: true, resetParams: true })
+        return
+      }
+      const hasExistingCode = !!(this.value && String(this.value).trim())
+      if (!hasExistingCode) {
+        this.loadBlankTemplate({ silent: true })
+        return
+      }
+      this.selectedTemplateKey = ''
+      this.templateParamValues = {}
+      this.templateDirty = false
+    },
+
+    loadBlankTemplate ({ silent = false } = {}) {
+      this.selectedTemplateKey = ''
+      this.templateParamValues = {}
+      this.templateDirty = false
+      this.setCode(this._getDefaultCode())
+      this.$emit('template-change', { key: '', params: {} })
+      this.activeTab = 'templates'
+      if (!silent) {
+        this.scheduleEditorRefresh()
+      }
+    },
+
+    goIndicatorIde () {
+      this.$router.push('/indicator-ide')
     },
 
     loadTemplate (key, { focusParams = false, resetParams = true } = {}) {
@@ -882,6 +943,11 @@ def on_bar(ctx, bar):
   border-radius: 8px;
   background: #fafafa;
   border: 1px solid #f0f0f0;
+
+  &--compact {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
 }
 
 .panel-intro__title {
@@ -900,49 +966,238 @@ def on_bar(ctx, bar):
   color: #8c8c8c;
 }
 
-.template-list {
-  padding: 4px 0;
+.indicator-redirect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(24, 144, 255, 0.18);
+  background: linear-gradient(135deg, rgba(24, 144, 255, 0.06) 0%, rgba(24, 144, 255, 0.02) 100%);
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: rgba(24, 144, 255, 0.35);
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.08);
+  }
+
+  &__icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: rgba(24, 144, 255, 0.12);
+    color: #1890ff;
+    font-size: 16px;
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #262626;
+    line-height: 1.4;
+  }
+
+  &__desc {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #8c8c8c;
+  }
+
+  &__arrow {
+    flex-shrink: 0;
+    color: #bfbfbf;
+    font-size: 12px;
+  }
 }
 
-.template-item {
+.blank-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 12px;
-  border: 1px solid #f0f0f0;
-  border-radius: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  border: 1px dashed #d9d9d9;
+  background: #fff;
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover,
   &.active {
     border-color: #1890ff;
-    background: #fafafa;
+    background: rgba(24, 144, 255, 0.03);
   }
 
-  .tpl-header {
+  &.active {
+    border-style: solid;
+    box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.12);
+  }
+
+  &__icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
-    margin-bottom: 4px;
-  }
-
-  .tpl-icon {
+    justify-content: center;
+    flex-shrink: 0;
+    background: #f5f5f5;
+    color: #595959;
     font-size: 16px;
-    margin-right: 8px;
   }
 
-  .tpl-name {
+  &__body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__title {
+    font-size: 13px;
     font-weight: 600;
-    font-size: 14px;
+    color: #262626;
   }
 
-  .tpl-desc {
-    font-size: 12px;
-    color: #888;
-    margin: 0 0 4px;
+  &__desc {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #8c8c8c;
   }
 
-  .tpl-use-btn {
-    padding: 0;
-    font-size: 12px;
+  &__check {
+    flex-shrink: 0;
+    color: #1890ff;
+    font-size: 16px;
+  }
+}
+
+.template-section-label {
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #bfbfbf;
+}
+
+.template-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.template-card {
+  position: relative;
+  padding: 12px 12px 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #f0f0f0;
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all 0.2s;
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #1890ff;
+    opacity: 0.75;
+  }
+
+  &--violet::before { background: linear-gradient(180deg, #722ed1, #9254de); }
+  &--teal::before { background: linear-gradient(180deg, #13c2c2, #36cfc9); }
+  &--amber::before { background: linear-gradient(180deg, #fa8c16, #ffc53d); }
+
+  &:hover,
+  &.active {
+    border-color: rgba(24, 144, 255, 0.35);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+    transform: translateY(-1px);
+  }
+
+  &.active {
+    background: rgba(24, 144, 255, 0.03);
+    box-shadow: 0 0 0 1px rgba(24, 144, 255, 0.12);
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  &__icon {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  &__badge {
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #595959;
+    background: #f5f5f5;
+  }
+
+  &__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #262626;
+    line-height: 1.4;
+  }
+
+  &__desc {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.55;
+    color: #8c8c8c;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  &__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  &__meta {
+    font-size: 10px;
+    color: #bfbfbf;
+  }
+
+  &__action {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1890ff;
+
+    .anticon {
+      font-size: 10px;
+      margin-left: 2px;
+    }
   }
 }
 
@@ -1150,9 +1405,97 @@ def on_bar(ctx, bar):
   }
 
   .template-item,
-  .param-item {
+  .param-item,
+  .blank-card,
+  .template-card {
     border-color: rgba(255, 255, 255, 0.08);
     background: #1c1c1c;
+  }
+
+  .indicator-redirect {
+    border-color: rgba(64, 169, 255, 0.25);
+    background: linear-gradient(135deg, rgba(24, 144, 255, 0.1) 0%, rgba(24, 144, 255, 0.03) 100%);
+
+    &:hover {
+      border-color: rgba(64, 169, 255, 0.4);
+    }
+
+    &__icon {
+      background: rgba(64, 169, 255, 0.15);
+      color: #69c0ff;
+    }
+
+    &__title {
+      color: #e0e6ed;
+    }
+
+    &__desc {
+      color: rgba(255, 255, 255, 0.45);
+    }
+
+    &__arrow {
+      color: rgba(255, 255, 255, 0.35);
+    }
+  }
+
+  .blank-card {
+    border-color: rgba(255, 255, 255, 0.12);
+
+    &:hover,
+    &.active {
+      border-color: #177ddc;
+      background: rgba(23, 125, 220, 0.06);
+    }
+
+    &__icon {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.65);
+    }
+
+    &__title {
+      color: #e0e6ed;
+    }
+
+    &__desc {
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    &__check {
+      color: #40a9ff;
+    }
+  }
+
+  .template-section-label {
+    color: rgba(255, 255, 255, 0.28);
+  }
+
+  .template-card {
+    &:hover,
+    &.active {
+      border-color: rgba(23, 125, 220, 0.45);
+      background: rgba(23, 125, 220, 0.06);
+    }
+
+    &__badge {
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    &__name {
+      color: #e0e6ed;
+    }
+
+    &__desc {
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    &__meta {
+      color: rgba(255, 255, 255, 0.28);
+    }
+
+    &__action {
+      color: #40a9ff;
+    }
   }
 
   .template-item:hover,
